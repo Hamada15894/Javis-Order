@@ -218,6 +218,7 @@
         <div style="display:flex; gap:8px;">
           <button class="btn btn-add" onclick="openModal()">➕ Add Manually</button>
           <button class="btn btn-rename" onclick="downloadRenamedPDFs()">📦 Rename PDFs</button>
+          <button class="btn btn-rename" onclick="openRepPanel()">👤 PDFs per Salesman</button>
           <button class="btn btn-export" onclick="exportToExcel()">📥 Export Excel</button>
           <button class="btn btn-clear" onclick="clearAll()">🗑️ Clear</button>
         </div>
@@ -574,7 +575,7 @@ async function convertAll(){const btn=document.getElementById('convertBtn');
       p.orderDate=new Date().toISOString();
       // Enrich from store directory: customer code, salesman, salesman1, store name
       const info=storeInfo(p.account,p.storeNumber);
-      if(info){p.customerCode=info.code;p.customerName=info.name;p.salesman=info.salesman;p.salesman1=info.salesman1;if(!p.deliveryTo||p.deliveryTo.length<3)p.deliveryTo=info.city;}
+      if(info){p.customerCode=info.code;p.customerName=info.name;p.salesman=info.salesman;p.salesman1=info.salesman1;p.deliveryTo=info.city||p.deliveryTo;p.region='North';}
       // Apply selected batch order type (overrides auto-detected) if chosen
       const bt=document.getElementById('batchType').value;
       if(bt)p.orderType=bt;
@@ -780,7 +781,8 @@ async function exportToExcel(){if(!orders.length){showToast('⚠️ No data');re
   const ws2=wb.addWorksheet('All Orders',{views:[{showGridLines:false}]});
   const oh=['#','PO Number','Account','Store #','Store Name','Customer Code','Salesman','Salesman1','Region','Order Date','PO Date','Expiry','Ex-VAT','VAT','Inc-VAT','Qty','Type'];
   ws2.addRow(oh);styleHeader(ws2,1,HEAD);
-  orders.forEach((o,i)=>{const r=ws2.addRow([i+1,o.poNumber,o.account,o.storeNumber||'',o.deliveryTo||'',o.customerCode||'',o.salesman||'',o.salesman1||'',o.region||'',fmtDate(o.orderDate),fmtDate(o.poDate),fmtDate(o.expiryDate),o.totalExVat||0,o.vat||0,o.totalIncVat||0,o.totalQty||0,o.orderType||'']);
+  const ordersS=orders.slice().sort((x,y)=>(x.salesman1||'~').localeCompare(y.salesman1||'~')||(parseInt(x.storeNumber)||0)-(parseInt(y.storeNumber)||0));
+  ordersS.forEach((o,i)=>{const r=ws2.addRow([i+1,o.poNumber,o.account,o.storeNumber||'',o.deliveryTo||'',o.customerCode||'',o.salesman||'',o.salesman1||'',o.region||'',fmtDate(o.orderDate),fmtDate(o.poDate),fmtDate(o.expiryDate),o.totalExVat||0,o.vat||0,o.totalIncVat||0,o.totalQty||0,o.orderType||'']);
     const bg=ELIGHT[o.account]||'FFFFFFFF',fg=ACOLOR[o.account]||'FF333333';
     r.eachCell(c=>{c.fill={type:'pattern',pattern:'solid',fgColor:{argb:bg}};c.border=border;});
     r.getCell(3).font={bold:true,color:{argb:fg}};
@@ -838,6 +840,34 @@ async function exportToExcel(){if(!orders.length){showToast('⚠️ No data');re
     ws.views=[{state:'frozen',ySplit:1,showGridLines:false}];
   }
 
+  // ---------- One sheet per salesman (stores grouped together, subtotal per store) ----------
+  const SPAL=['FF7B2FA0','FF1F5FA8','FFC55A11','FF1E7A2E','FFB8860B','FFC00000','FF00796B'];
+  const reps=[...new Set(orders.map(o=>(o.salesman1||'').trim()).filter(Boolean))].sort();
+  reps.forEach((rep,ri2)=>{
+    const grp=orders.filter(o=>(o.salesman1||'').trim()===rep).sort((x,y)=>(parseInt(x.storeNumber)||0)-(parseInt(y.storeNumber)||0));
+    const col=SPAL[ri2%SPAL.length];
+    const ws=wb.addWorksheet(('Rep - '+rep).slice(0,31),{views:[{showGridLines:false}]});
+    ws.addRow(['Store #','Store Name','PO Number','PO Date','Expiry','Code','Barcode','Description','Qty','UOM','Unit Price','Total','Request Order','Remarks']);
+    styleHeader(ws,1,col);
+    const dvRows=[];let rn=1,repTot=0;
+    for(const o of grp){const bg=ELIGHT[o.account]||'FFFFFFFF';
+      const lines=(o.items||[]).length?o.items:[{desc:'(no line items — totals only)',total:o.totalExVat||0}];
+      lines.forEach(it=>{const r=ws.addRow([o.storeNumber||'',o.deliveryTo||'',o.poNumber,fmtDate(o.poDate||o.orderDate),fmtDate(o.expiryDate),it.code||'',it.barcode||'',it.desc||'',(it.qty!==''&&it.qty!=null?it.qty:''),it.uom||'',it.unit||0,it.total||0,'','']);
+        r.eachCell(c=>{c.fill={type:'pattern',pattern:'solid',fgColor:{argb:bg}};c.border=border;});
+        r.getCell(1).font={bold:true,color:{argb:'FF1F5FA8'}};rn++;dvRows.push(rn);});
+      const st=ws.addRow(['','','','','','','','Store '+(o.storeNumber||'')+' — '+(o.deliveryTo||'')+' · Ex-VAT','','','',+(o.totalExVat||0).toFixed(2),'','']);
+      st.eachCell(c=>{c.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FFE3F2FD'}};});
+      st.getCell(8).font={bold:true,color:{argb:col}};st.getCell(12).font={bold:true,size:12,color:{argb:'FF1E7A2E'}};
+      rn++;repTot+=o.totalExVat||0;}
+    ws.addRow([]);
+    const t=ws.addRow(['','','','','','','',rep+' — TOTAL Ex-VAT','','','',+repTot.toFixed(2),'','']);
+    t.getCell(8).font={bold:true,size:12,color:{argb:col}};t.getCell(12).font={bold:true,size:13,color:{argb:'FF1E7A2E'}};t.getCell(12).numFmt=moneyFmt;
+    for(let r=2;r<=rn;r++){ws.getCell(r,11).numFmt=moneyFmt;ws.getCell(r,12).numFmt=moneyFmt;}
+    if(rn>=2)ws.dataValidations.add('N2:N'+rn,{type:'list',allowBlank:true,formulae:[REMARKS],showErrorMessage:false});
+    ws.columns=[{width:9},{width:20},{width:14},{width:13},{width:13},{width:12},{width:16},{width:42},{width:7},{width:8},{width:12},{width:14},{width:14},{width:22}];
+    ws.views=[{state:'frozen',ySplit:1,showGridLines:false}];
+  });
+
   const fname=`JAVIS Order — ${String(now.getDate()).padStart(2,'0')}-${M[now.getMonth()]}-${now.getFullYear()}.xlsx`;
   const buf=await wb.xlsx.writeBuffer();
   const blob=new Blob([buf],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
@@ -869,11 +899,40 @@ async function downloadRenamedPDFs(){
   const miss=orders.length-have.length;
   showToast(`📦 ${have.length} PDF(s) renamed & zipped${miss>0?` · ${miss} from older sessions skipped`:''}`);
 }
+
+// ---------- Per-salesman PDF packs: one ZIP per salesman ----------
+function repGroups(){const g={};for(const o of orders){if(!PDF_FILES[o.id])continue;const r=(o.salesman1||'').trim()||'No salesman';(g[r]=g[r]||[]).push(o);}
+  for(const r in g)g[r].sort((x,y)=>(parseInt(x.storeNumber)||0)-(parseInt(y.storeNumber)||0));return g;}
+async function downloadRepZip(rep){
+  if(typeof JSZip==='undefined'){showToast('⚠️ ZIP library not loaded (check internet)');return;}
+  const g=repGroups()[rep];if(!g||!g.length)return;
+  const zip=new JSZip(),used={};
+  for(const o of g){const parts=[o.storeNumber||storeLabel(o),o.salesman1||'',(o.totalExVat||0).toFixed(2)].filter(Boolean);
+    const base=sanitizeFile(parts.join(' '));let n=base+'.pdf',k=2;while(used[n])n=base+' ('+(k++)+').pdf';used[n]=1;zip.file(n,PDF_FILES[o.id]);}
+  const M=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'],now=new Date();
+  const blob=await zip.generateAsync({type:'blob'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;
+  a.download=`${sanitizeFile(rep)} POs — ${String(now.getDate()).padStart(2,'0')}-${M[now.getMonth()]}-${now.getFullYear()}.zip`;document.body.appendChild(a);a.click();a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),3000);}
+async function downloadAllRepZips(){for(const r of Object.keys(repGroups()).sort()){await downloadRepZip(r);await new Promise(x=>setTimeout(x,600));}}
+function openRepPanel(){
+  const g=repGroups(),reps=Object.keys(g).sort();
+  if(!reps.length){showToast('⚠️ No PDFs in this session — convert first');return;}
+  const pal=['#B57BEE','#5FA8F0','#F0925A','#4CC76A','#E6B422','#F06A6A','#3FC1B0'];
+  let ov=document.getElementById('repPanel');if(ov)ov.remove();
+  ov=document.createElement('div');ov.id='repPanel';
+  ov.style.cssText='position:fixed;inset:0;background:rgba(5,10,20,.7);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px';
+  let h='<div style="background:#111b2e;border:1px solid #2a3b5a;border-radius:14px;padding:20px;width:min(520px,100%);max-height:85vh;overflow:auto;color:#e6edf7"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px"><b style="font-size:16px">👤 Purchase orders per salesman</b><button onclick="document.getElementById(\'repPanel\').remove()" style="background:none;border:0;color:#9fb0c8;font-size:20px;cursor:pointer">✕</button></div>';
+  reps.forEach((r,i)=>{const tot=g[r].reduce((s,o)=>s+(o.totalExVat||0),0);const c=pal[i%pal.length];
+    h+=`<div style="display:flex;align-items:center;gap:10px;padding:10px 12px;margin-bottom:8px;border:1px solid #2a3b5a;border-left:4px solid ${c};border-radius:10px"><div style="flex:1"><div style="font-weight:700;color:${c}">${r}</div><div style="font-size:12px;color:#9fb0c8">${g[r].length} PO · <b style="color:#4CC76A;font-size:13px">${fmtNum(tot)}</b> SAR ex-VAT</div></div><button class="btn btn-rename" data-rep="${encodeURIComponent(r)}" onclick="downloadRepZip(decodeURIComponent(this.dataset.rep))">⬇️ ZIP</button></div>`;});
+  h+='<button class="btn btn-rename" style="width:100%;margin-top:6px" onclick="downloadAllRepZips()">📦 Download all (one ZIP per salesman)</button></div>';
+  ov.innerHTML=h;ov.addEventListener('click',e=>{if(e.target===ov)ov.remove();});document.body.appendChild(ov);}
 function showToast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),3000);}
 function LOG(msg,cls){const el=document.getElementById('statusLog');if(!el)return;el.style.display='block';
   const time=new Date().toLocaleTimeString();
   el.innerHTML+=`<div class="${cls||''}">[${time}] ${msg}</div>`;el.scrollTop=el.scrollHeight;
   console.log('[JAVIS]',msg);}
+// Re-apply store directory to previously saved Othaim orders (city, salesman, code)
+{let ch=false;for(const o of orders){const i=storeInfo(o.account,o.storeNumber);if(i&&(o.deliveryTo!==i.city||o.salesman1!==i.salesman1||o.customerCode!==i.code)){o.customerCode=i.code;o.customerName=i.name;o.salesman=i.salesman;o.salesman1=i.salesman1;o.deliveryTo=i.city||o.deliveryTo;o.region='North';ch=true;}}if(ch)saveOrders();}
 renderAll();
 if(location.protocol==='file:'){setTimeout(()=>showToast('ℹ️ Scanned PDFs (Carrefour) may need "Add Manually" when opened as a local file'),1200);}
 </script>
