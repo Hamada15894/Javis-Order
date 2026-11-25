@@ -6,6 +6,7 @@
 <title>JAVIS Order Converter</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.0/dist/tesseract.min.js"></script>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
@@ -19,7 +20,14 @@
   body::before { content:''; position:fixed; inset:0; background-image:linear-gradient(rgba(56,189,248,0.025) 1px,transparent 1px),linear-gradient(90deg,rgba(56,189,248,0.025) 1px,transparent 1px); background-size:44px 44px; pointer-events:none; z-index:0; }
   .app { position:relative; z-index:1; max-width:1500px; margin:0 auto; padding:18px; }
   .header { display:flex; align-items:center; justify-content:space-between; padding:16px 22px; margin-bottom:16px; background:linear-gradient(135deg,var(--surface),rgba(56,189,248,0.05)); border:1px solid var(--border); border-radius:16px; position:relative; overflow:hidden; }
-  .header::after { content:''; position:absolute; top:0; left:0; right:0; height:2px; background:linear-gradient(90deg,transparent,var(--accent),transparent); }
+  .header::after { content:''; position:absolute; top:0; left:0; right:0; height:2px; background:linear-gradient(90deg,transparent,var(--accent),transparent); z-index:2; }
+  .wave-bg { position:absolute; left:0; right:0; bottom:0; width:200%; height:78px; z-index:0; pointer-events:none; }
+  .wave-bg .wv { fill:var(--accent); }
+  .wave-bg .wv1 { opacity:.16; animation:waveflow 12s linear infinite; }
+  .wave-bg .wv2 { opacity:.20; fill:#2563eb; animation:waveflow 8s linear infinite reverse; }
+  .wave-bg .wv3 { opacity:.12; fill:#7dd3fc; animation:waveflow 16s linear infinite; }
+  @keyframes waveflow { from{transform:translateX(0);} to{transform:translateX(-50%);} }
+  .header-left, .header-stats { position:relative; z-index:1; }
   .header-left { display:flex; align-items:center; gap:14px; }
   .logo-icon { width:46px; height:46px; border-radius:12px; background:linear-gradient(135deg,var(--accent),#1d4ed8); display:flex; align-items:center; justify-content:center; font-size:22px; box-shadow:0 0 24px rgba(56,189,248,0.3); }
   .logo-text h1 { font-size:21px; font-weight:700; letter-spacing:3px; color:var(--accent); }
@@ -33,7 +41,12 @@
   .card-header { padding:13px 16px; border-bottom:1px solid var(--border); display:flex; align-items:center; gap:9px; background:rgba(56,189,248,0.03); }
   .card-header h3 { font-size:13px; font-weight:600; }
   .card-body { padding:15px; }
-  .drop-zone { border:2px dashed var(--border); border-radius:12px; padding:30px 18px; text-align:center; cursor:pointer; transition:.3s; background:var(--surface2); }
+  .drop-zone { border:2px dashed var(--border); border-radius:12px; padding:30px 18px; text-align:center; cursor:pointer; transition:.3s; background:var(--surface2); position:relative; overflow:hidden; }
+  .drop-zone > *:not(.dz-wave) { position:relative; z-index:1; }
+  .dz-wave { position:absolute; left:0; bottom:0; width:200%; height:46px; pointer-events:none; opacity:.9; }
+  .dz-wave path { fill:var(--accent); opacity:.13; animation:waveflow 9s linear infinite; }
+  .dz-wave path + path { opacity:.11; fill:#2563eb; animation-duration:13s; animation-direction:reverse; }
+  .drop-zone:hover .dz-wave path, .drop-zone.dragover .dz-wave path { opacity:.24; }
   .drop-zone:hover,.drop-zone.dragover { border-color:var(--accent); background:rgba(56,189,248,0.06); }
   .drop-zone .icon { font-size:36px; margin-bottom:8px; }
   .drop-zone p { color:var(--text2); font-size:12px; line-height:1.6; }
@@ -60,6 +73,8 @@
   .btn-clear:hover { background:rgba(248,113,113,0.22); }
   .btn-add { background:rgba(56,189,248,0.15); color:var(--accent); border:1px solid rgba(56,189,248,0.35); padding:10px 16px; }
   .btn-add:hover { background:rgba(56,189,248,0.25); }
+  .btn-rename { background:rgba(251,146,60,0.15); color:var(--orange); border:1px solid rgba(251,146,60,0.35); padding:10px 16px; }
+  .btn-rename:hover { background:rgba(251,146,60,0.25); }
   .modal-overlay { position:fixed; inset:0; background:rgba(5,8,15,0.8); backdrop-filter:blur(4px); z-index:2000; display:none; align-items:center; justify-content:center; padding:20px; }
   .modal-overlay.show { display:flex; }
   .modal { background:var(--surface); border:1px solid var(--border); border-radius:16px; width:100%; max-width:560px; max-height:90vh; overflow-y:auto; box-shadow:0 20px 60px rgba(0,0,0,.6); }
@@ -143,6 +158,11 @@
 <body>
 <div class="app">
   <div class="header">
+    <svg class="wave-bg" viewBox="0 0 2400 120" preserveAspectRatio="none" aria-hidden="true">
+      <path class="wv wv1" d="M0,60 C150,100 450,100 600,60 C750,20 1050,20 1200,60 C1350,100 1650,100 1800,60 C1950,20 2250,20 2400,60 L2400,120 L0,120 Z"></path>
+      <path class="wv wv2" d="M0,70 C200,40 400,40 600,70 C800,100 1000,100 1200,70 C1400,40 1600,40 1800,70 C2000,100 2200,100 2400,70 L2400,120 L0,120 Z"></path>
+      <path class="wv wv3" d="M0,82 C180,108 420,108 600,82 C780,56 1020,56 1200,82 C1380,108 1620,108 1800,82 C1980,56 2220,56 2400,82 L2400,120 L0,120 Z"></path>
+    </svg>
     <div class="header-left">
       <div class="logo-icon">📦</div>
       <div class="logo-text"><h1>JAVIS&nbsp;ORDER</h1><p>Purchase Order → Excel Converter · Mars Saudi Arabia</p></div>
@@ -159,9 +179,13 @@
         <div class="card-header"><span>📄</span><h3>Upload Purchase Orders</h3></div>
         <div class="card-body">
           <div class="drop-zone" id="dropZone" onclick="document.getElementById('fileInput').click()">
+            <svg class="dz-wave" viewBox="0 0 2400 100" preserveAspectRatio="none" aria-hidden="true">
+              <path d="M0,50 C150,85 450,85 600,50 C750,15 1050,15 1200,50 C1350,85 1650,85 1800,50 C1950,15 2250,15 2400,50 L2400,100 L0,100 Z"></path>
+              <path d="M0,62 C200,35 400,35 600,62 C800,90 1000,90 1200,62 C1400,35 1600,35 1800,62 C2000,90 2200,90 2400,62 L2400,100 L0,100 Z"></path>
+            </svg>
             <div class="icon">⬆️</div>
-            <p>Drop <strong>PDF</strong> files here<br>or click to browse</p>
-            <p style="margin-top:7px; font-size:10px; color:var(--text3)">Tamimi · Danube · LuLu · Carrefour · Panda</p>
+            <p>Drop <strong>PDF</strong> files here<br>click to browse, or <strong>paste (Ctrl+V)</strong></p>
+            <p style="margin-top:7px; font-size:10px; color:var(--text3)">Tamimi · Danube · LuLu · Carrefour · Othaim · Panda</p>
           </div>
           <input type="file" id="fileInput" accept=".pdf" multiple>
           <div class="file-list" id="fileList"></div>
@@ -193,6 +217,7 @@
       <div class="card-header"><span>📋</span><h3>Order Records</h3><div style="flex:1"></div>
         <div style="display:flex; gap:8px;">
           <button class="btn btn-add" onclick="openModal()">➕ Add Manually</button>
+          <button class="btn btn-rename" onclick="downloadRenamedPDFs()">📦 Rename PDFs</button>
           <button class="btn btn-export" onclick="exportToExcel()">📥 Export Excel</button>
           <button class="btn btn-clear" onclick="clearAll()">🗑️ Clear</button>
         </div>
@@ -253,7 +278,21 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs
 const STORAGE_KEY='javis_orders_v3';
 let orders=JSON.parse(localStorage.getItem(STORAGE_KEY)||'[]');
 let pendingFiles=[], currentTab='all', expanded={};
+const PDF_FILES={}; // order.id -> original File (session only, for rename/download)
 const COLORS={Tamimi:'#3b82f6',Danube:'#ef4444',LuLu:'#e11d48',Carrefour:'#2563eb',Panda:'#22c55e',Othaim:'#a855f7',Unknown:'#7882a0'};
+const OTHAIM_STORES={"763":["17632442","17471 763-Othaim-Dawadmi","Abdelhamid Ramadan Abdelhamid Gabr","Abdelhamid","Duwadmi"],"14":["10454488","14-OTH S/M Shaqra","Abdelhamid Ramadan Abdelhamid Gabr","Abdelhamid","Shaqra"],"193":["10454612","193-OTH S/M Dawadmi","Abdelhamid Ramadan Abdelhamid Gabr","Abdelhamid","Duwadmi"],"195":["10454614","195-OTH S/M Sajer","Abdelhamid Ramadan Abdelhamid Gabr","Abdelhamid","Sajer"],"309":["10454623","309-OTH S/M Quwayiyah","Abdelhamid Ramadan Abdelhamid Gabr","Abdelhamid","Duwadmi"],"320":["10454633","320-OTH S/M AFIF","Abdelhamid Ramadan Abdelhamid Gabr","Abdelhamid","Duwadmi"],"340":["10454649","340-OTH S/M Al-Dhari","Abdelhamid Ramadan Abdelhamid Gabr","Abdelhamid","Duwadmi"],"497":["17614255","497 - AL RUWDAH","Abdelhamid Ramadan Abdelhamid Gabr","Abdelhamid","Alrwaidah"],"734":["17620787","17531 734- Othaim-Cornal","Abdelhamid Ramadan Abdelhamid Gabr","Abdelhamid","Duwadmi"],"354":["10454662","354-OTH S/M Hafer Albatin","Mutlaq Hussain Algharrash","Mutlaq","Hafer Al Batin"],"439":["17598308","439- Al Ghurub, As Safaa, Haf","Mutlaq Hussain Algharrash","Mutlaq","Hafer Al Batin"],"492":["17614981","492 - king abdulaziz road","Mutlaq Hussain Algharrash","Mutlaq","Hafer Al Batin"],"126":["10454556","126-OTH RKN Thoaibya","Mutlaq Hussain Algharrash","Mutlaq","Hafer Al Batin"],"163":["10454587","163-OTH S/M Ros Center","Mutlaq Hussain Algharrash","Mutlaq","Hafer Al Batin"],"52":["10454512","52-OTH S/M Al Azizia","Mutlaq Hussain Algharrash","Mutlaq","Hafer Al Batin"],"56":["10454514","56-OTH S/M Al Rabwa","Mutlaq Hussain Algharrash","Mutlaq","Hafer Al Batin"],"75":["10454523","75-OTH S/M Al Kaisuma","Mutlaq Hussain Algharrash","Mutlaq","Hafer Al Batin"],"80":["10454524","80-OTH S/M Rafha","Mutlaq Hussain Algharrash","Mutlaq","Hafer Al Batin"],"95":["10454536","95-OTH S/M 5000 KKMC","Mutlaq Hussain Algharrash","Mutlaq","Hafer Al Batin"],"496":["17632443","76316 496-OTHAIM-HAFR","Mutlaq Hussain Algharrash","Mutlaq","Hafer Al Batin"],"810":["17645916","39748 King Khalid Military City 397","Mutlaq Hussain Algharrash","Mutlaq","Hafer Al Batin"],"197":["10454616","197-OTH S/M Al Asyah","Ibrahim Alruwayshid","Ibrahim","Buraida"],"304":["10454620","304-OTH RKN Shamasiya","Ibrahim Alruwayshid","Ibrahim","Buraida"],"142":["10454569","142-OTH S/M Rwd Sudayr","Ibrahim Alruwayshid","Ibrahim","Majma"],"175":["10454598","175-OTH S/M Al Khabra","Ibrahim Alruwayshid","Ibrahim","Buraida"],"40":["10454504","40-OTH S/M Majma","Ibrahim Alruwayshid","Ibrahim","Majma"],"47":["10454509","47-OTH S/M Al Rass","Ibrahim Alruwayshid","Ibrahim","Buraida"],"51":["10454511","51-OTH S/M Al Barakiya","Ibrahim Alruwayshid","Ibrahim","Bakeriya"],"54":["10454513","54-OTH S/M RIY Kubra","Ibrahim Alruwayshid","Ibrahim","Buraida"],"71":["10454521","71-OTH S/M Badaya","Ibrahim Alruwayshid","Ibrahim","Buraida"],"811":["17645915","39748 Majma 39748","Ibrahim Alruwayshid","Ibrahim","Majma"],"462":["17605534","462- HALAB AGA، HAEL","Mohamed Mahmoud Mohamed Sarsik","Sarsik","Hail"],"489":["17611673","81411 hail - baqaa","Mohamed Mahmoud Mohamed Sarsik","Sarsik","Hail"],"100":["10454540","100-OTH HYP Hail Mall","Mohamed Mahmoud Mohamed Sarsik","Sarsik","Hail"],"403":["10454690","403-403-OTH S/M Al Nujra,Hail","Mohamed Mahmoud Mohamed Sarsik","Sarsik","Hail"],"423":["17581343","423-Othaim Samra,Hail","Mohamed Mahmoud Mohamed Sarsik","Sarsik","Hail"],"415":["17585259","4607 Othaim - 415 Al Khuzama, Hail","Mohamed Mahmoud Mohamed Sarsik","Sarsik","Hail"],"406":["17585281","406 - Omar Ibn Al-Khattab Road","Mohamed Mahmoud Mohamed Sarsik","Sarsik","Hail"],"431":["17585260","55424 Othaim - 431 Omar Ibn Al-Khat","Mohamed Mahmoud Mohamed Sarsik","Sarsik","Hail"],"480":["17611674","52315 OTHAIM,BURIDAH","Mostafa","Mostafa","Buraida"],"746":["17617218","52355 2861، 8526، الشماس، بريدة 523","Mostafa","Mostafa","Buraida"],"112":["10454547","112-OTH S/M FYZIA DIST","Mostafa","Mostafa","Buraida"],"160":["10454585","160-OTH S/M Akeirsha","Mostafa","Mostafa","Buraida"],"167":["10454591","167-OTH S/M Barakateen","Mostafa","Mostafa","Buraida"],"169":["10454593","169-OTH S/M Unizah new","Mostafa","Mostafa","Onaiza"],"173":["10454596","173-OTH S/M Zolfee","Mostafa","Mostafa","Zulfi"],"185":["10454605","185-OTH S/M Nahadah","Mostafa","Mostafa","Buraida"],"199":["10454618","199-OTH S/M Al Ghat","Mostafa","Mostafa","Majma"],"311":["10454625","311-OTH BURAIDAH","Mostafa","Mostafa","Buraida"],"316":["10454629","316-OTH S/M AL ZULFI","Mostafa","Mostafa","Zulfi"],"326":["10454638","326-OTH S/M Buraida","Mostafa","Mostafa","Buraida"],"332":["10454643","332-OTH AL Khlij","Mostafa","Mostafa","Buraida"],"347":["10454656","347-OTH S/M Zolfee","Mostafa","Mostafa","Zulfi"],"45":["10454507","45-OTH S/M El Mozneb","Mostafa","Mostafa","Muznab"],"46":["10454508","46-OTH S/M Unaizah","Mostafa","Mostafa","Onaiza"],"762":["17632445","56468 762-OTHAIM-ONAIZA","Mostafa","Mostafa","Onaiza"],"434":["17632444","52358 434-OTHAIM-BURIDAH","Mostafa","Mostafa","Buraida"],"831":["17647937","51411 Othaim 831","Mostafa","Mostafa","Buraida"],"848":["17663013","56523 Store number Othaim 848","Mostafa","Mostafa","Muznab"],"468":["17689278","52581 468-OTHAIM-BURIDAH","Mostafa","Mostafa","Buraida"],"478":["17612150","478 - OTHAIM , ARAR","Ossama Abdelwahab Ibrahim Mosaad","Ossama","Arar"],"741":["17618376","73251 Ibn Hamid, 8495, Al-Dahiya Di","Ossama Abdelwahab Ibrahim Mosaad","Ossama","Arar"],"134":["10455186","134-OTH S/M Qurayyat 1","Ossama Abdelwahab Ibrahim Mosaad","Ossama","Quarrayat"],"136":["10454563","136-OTH S/M Turaif","Ossama Abdelwahab Ibrahim Mosaad","Ossama","Turaif"],"151":["10455188","151-OTH S/M Qurayyat 2","Ossama Abdelwahab Ibrahim Mosaad","Ossama","Quarrayat"],"155":["10454580","155-OTH S/M Arar","Ossama Abdelwahab Ibrahim Mosaad","Ossama","Arar"],"366":["10455191","366-OTH S/M Tabarjal, Quarrayat","Ossama Abdelwahab Ibrahim Mosaad","Ossama","Quarrayat"],"367":["10454670","367-OTH S/M Dumat Aljandal,Sakaka","Ossama Abdelwahab Ibrahim Mosaad","Ossama","Sakaka"],"399":["10454689","399-OTH S/M Arar,al Uwaiyqilah","Ossama Abdelwahab Ibrahim Mosaad","Ossama","Arar"],"57":["10454515","57-OTH S/M Skaka","Ossama Abdelwahab Ibrahim Mosaad","Ossama","Sakaka"],"85":["10454529","85-OTH HYP Arar","Ossama Abdelwahab Ibrahim Mosaad","Ossama","Arar"],"829":["17667384","72446 829-Othaim Sakaka Al salam","Ossama Abdelwahab Ibrahim Mosaad","Ossama","Sakaka"]};
+// Othaim store lookup: Store# -> [customerCode, customerName, salesman, salesman1, city]
+function storeInfo(account,store){
+  if(account==='Othaim'&&store&&OTHAIM_STORES[String(store).trim()]){
+    const a=OTHAIM_STORES[String(store).trim()];
+    return {code:a[0],name:a[1],salesman:a[2],salesman1:a[3],city:a[4]};
+  }
+  return null;
+}
+function storeLabel(o){
+  return (o.customerName||o.deliveryTo||((o.account||'')+' '+(o.storeNumber||''))||'order').trim();
+}
+function sanitizeFile(s){return String(s).replace(/[\\/:*?"<>|]/g,' ').replace(/\s+/g,' ').trim().slice(0,120);}
 // Email palette: {background, text} per account — exact colors specified by user
 const ECOLORS={
   Tamimi:{bg:'#C0E6F5',fg:'#13688F'}, Danube:{bg:'#C6E0B4',fg:'#54852E'},
@@ -268,7 +307,7 @@ function detectAccount(t){const s=t.toLowerCase();
   if(s.includes('lulu'))return'LuLu';
   if(s.includes('carrefour')||s.includes('saudi hypermarkets')||s.includes('hypermarkets co')||(s.includes('jouf')&&s.includes('mall')))return'Carrefour';
   if(s.includes('panda'))return'Panda';
-  if(s.includes('othaim'))return'Othaim';
+  if(s.includes('othaim')||s.includes('purshase')||s.includes('apt000140')||/vendor\s*no\s*:?\s*apt/i.test(s))return'Othaim';
   return'Unknown';}
 
 async function extractPDF(file,statusEl){
@@ -342,7 +381,9 @@ async function ocrPDF(pdf,statusEl){
 
 function parseDate(s){if(!s)return null;
   s=String(s).trim();
-  let m=s.match(/(\d{1,2})[\/\.\-](\d{1,2})[\/\.\-](\d{2,4})/);
+  let m=s.match(/(\d{4})-(\d{2})-(\d{2})/); // ISO YYYY-MM-DD (Othaim)
+  if(m)return new Date(+m[1],+m[2]-1,+m[3]).toISOString();
+  m=s.match(/(\d{1,2})[\/\.\-](\d{1,2})[\/\.\-](\d{2,4})/);
   if(m){let[,d,mo,y]=m;if(y.length===2)y='20'+y;
     if(+mo>12&&+d<=12){const tmp=d;d=mo;mo=tmp;}
     return new Date(+y,+mo-1,+d).toISOString();}
@@ -354,13 +395,12 @@ function expiryClass(iso){if(!iso)return'';const now=new Date();now.setHours(0,0
   const diff=Math.floor((new Date(iso)-now)/86400000);
   if(diff<0)return'exp-past';if(diff<=7)return'exp-near';return'exp-ok';}
 function fmtNum(n){return(n||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});}
-function detectRegion(t){if(!t)return'';const s=t.toUpperCase();
-  if(/RIYADH|RIYAD/.test(s))return'Center';
-  if(/JEDDAH|MAKKAH|MECCA|MEDINA|MADINAH|TAIF/.test(s))return'West';
-  if(/DAMMAM|KHOBAR|JUBAIL|QATIF|AHSA|HOFUF/.test(s))return'East';
-  if(/BURAYDAH|QASSIM|UNAIZAH|ONAIZA|RASS/.test(s))return'Center';
-  if(/HAIL|TABUK|JOUF|SAKAKA|ARAR/.test(s))return'North';
-  if(/ABHA|JIZAN|JAZAN|NAJRAN|KHAMIS|BISHA/.test(s))return'South';
+function detectRegion(t){if(!t)return'';const s=t.toUpperCase().replace(/['`’]/g,'');
+  // Territory division per Mars KSA workflow: Qassim, Riyadh, Hail, Jouf, Hafr Al Batin → North
+  if(/RIYADH|RIYAD|BURAYDAH|BURAIDA|QASSIM|QASEEM|UNAIZAH|ONAIZA|UNAYZAH|RASS|AL\s*RASS|HAIL|HAYIL|TABUK|JOUF|JAWF|SAKAKA|ARAR|HAFER|HAFR|BATIN/.test(s))return'North';
+  if(/JEDDAH|JIDDAH|MAKKAH|MECCA|MEDINA|MADINAH|TAIF|YANBU|RABIGH/.test(s))return'West';
+  if(/DAMMAM|KHOBAR|JUBAIL|QATIF|AHSA|HOFUF|HASA|DHAHRAN/.test(s))return'East';
+  if(/ABHA|JIZAN|JAZAN|NAJRAN|KHAMIS|BISHA|MUSHAYT/.test(s))return'South';
   return'';}
 
 function mk(po,account,store,deliveryTo,orderDate,expiry,exVat,qty,type,notes,items){
@@ -452,6 +492,42 @@ function parseCarrefour(d){
   return mk(po,'Carrefour',store,deliveryTo,orderDate,expiry,exVat,
     qtyTotal?+qtyTotal:items.reduce((s,i)=>s+(i.qty||0),0),'Regular Order','',items);}
 
+function parseOthaim(d){const t=d.fullText,L=d.lines;
+  // PO — the 10-13 digit order number (its value may land on a different line than the "P.O :" label)
+  // Header line: "<PO> <store> <vendor-site>" — PO is 10-13 digits OR new format like 21A000189928
+  const hdr=t.match(/\b(\d{2}[A-Za-z]\d{8,10}|\d{10,13})\s+(\d{2,4})\s+\d{3,6}\b/);
+  let po=hdr?hdr[1]:((t.match(/P\.?O\s*:?\s*(\d{2}[A-Za-z]\d{8,10}|\d{10,13})/i)||[])[1]||(t.match(/\b(\d{2}[A-Za-z]\d{8,10})\b/)||[])[1]||(t.match(/\b(\d{12,13})\b/)||[])[1]||(t.match(/\b(\d{10,13})\b/)||[])[1]||'');
+  // Dates — Entry (order) and Canc (expiry); labels may sit inline or apart
+  const orderDate=parseDate((t.match(/Entry\s*Date\s*:?\s*(\d{4}-\d{2}-\d{2})/i)||[])[1]);
+  const expiry=parseDate((t.match(/Canc\s*Date\s*:?\s*(\d{4}-\d{2}-\d{2})/i)||[])[1]);
+  let store=hdr?hdr[2]:(t.match(/Store\s*:?\s*(\d{2,4})\b/i)||[])[1];
+  store=store||'';
+  const city=(t.match(/City\s*:?\s*([A-Za-z'’\-]+)/i)||[])[1]||'';
+  let deliveryTo=(t.match(/((?:Al-)?[A-Za-z'’]+-Ha['’]?il[A-Za-z'’\-]*)/i)||[])[1]||city;
+  deliveryTo=(deliveryTo||'').replace(/\s+/g,' ').trim();
+  // Items — pdf.js splits each item into two lines (desc+totals, then Sku+buyer+unit+qty); handle both.
+  const rxWhole=/(\d{6})\s+([A-Za-z&].*?)\s+(\d{3})\s+(P\d{4})\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})\s+(\d+)\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})\s*$/;
+  const rxB=/(\d{6})\s+(\d{3})\s+(P\d{4})\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})\s+(\d+)\s*$/; // Sku Buyer Unit Cost NetCost Qty
+  const rxA=/^(.+?)\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})\s*$/;            // Description + 3 totals (prev line)
+  const items=[];let sum=0,qtot=0;
+  for(let i=0;i<L.length;i++){
+    let m=L[i].match(rxWhole);
+    if(m){const net=+m[6].replace(/,/g,''),q=+m[7],ex=+m[8].replace(/,/g,'');
+      items.push({code:m[1],barcode:'',desc:m[2].trim(),qty:q,uom:'',unit:net,total:ex});sum+=ex;qtot+=q;continue;}
+    m=L[i].match(rxB);
+    if(m){const a=(L[i-1]||'').match(rxA);const net=+m[5].replace(/,/g,''),q=+m[6];
+      const ex=a?+a[2].replace(/,/g,''):+(net*q).toFixed(2);
+      items.push({code:m[1],barcode:'',desc:a?a[1].trim():'',qty:q,uom:'',unit:net,total:ex});sum+=ex;qtot+=q;}
+  }
+  const exVat=+sum.toFixed(2);
+  const o=mk(po,'Othaim',store,deliveryTo,orderDate,expiry,exVat,qtot,'Regular Order','',items);
+  // Exact totals: grand inc-VAT is the largest thousands-separated money value (VPN codes have no commas),
+  // and must be within VAT range of the ex-VAT sum — derive VAT from it to avoid per-line rounding drift
+  const nums=(t.match(/\d{1,3}(?:,\d{3})+\.\d{2}/g)||[]).map(x=>+x.replace(/,/g,''));
+  const maxNum=nums.length?Math.max(...nums):0;
+  if(maxNum>exVat&&maxNum<exVat*1.25){o.totalIncVat=+maxNum.toFixed(2);o.vat=+(maxNum-exVat).toFixed(2);}
+  return o;}
+
 function parseGeneric(d,account){const t=d.fullText;
   const po=(t.match(/(?:PO|Purchase Order|Order)\s*[#:\s]*([\w\-]+)/i)||[])[1]||'N/A';
   const orderDate=parseDate((t.match(/(?:Order|PO)\s+Date\s*[:\s]*([\d\/\.\-]+)/i)||[])[1]);
@@ -463,6 +539,17 @@ dropZone.addEventListener('dragover',e=>{e.preventDefault();dropZone.classList.a
 dropZone.addEventListener('dragleave',()=>dropZone.classList.remove('dragover'));
 dropZone.addEventListener('drop',e=>{e.preventDefault();dropZone.classList.remove('dragover');handleFiles([...e.dataTransfer.files]);});
 fileInput.addEventListener('change',e=>handleFiles([...e.target.files]));
+// Paste support: copy a PDF from your file manager (or some email clients) and press Ctrl+V
+window.addEventListener('paste',e=>{
+  const dt=e.clipboardData; if(!dt)return;
+  let files=[...(dt.items||[])].filter(it=>it.kind==='file').map(it=>it.getAsFile()).filter(Boolean);
+  if(!files.length && dt.files && dt.files.length) files=[...dt.files];
+  if(!files.length) return; // plain text/HTML paste — ignore silently
+  e.preventDefault();
+  const pdfs=files.filter(f=>f&&(f.type==='application/pdf'||(f.name||'').toLowerCase().endsWith('.pdf')));
+  if(pdfs.length){handleFiles(pdfs);showToast(`📎 ${pdfs.length} PDF pasted`);}
+  else showToast('⚠️ No PDF on clipboard — try dragging the attachment instead');
+});
 function handleFiles(files){const pdfs=files.filter(f=>f.name.toLowerCase().endsWith('.pdf'));
   if(!pdfs.length){showToast('⚠️ PDF files only');return;}
   pendingFiles=pdfs;
@@ -480,16 +567,23 @@ async function convertAll(){const btn=document.getElementById('convertBtn');
     try{const d=await extractPDF(f,document.getElementById('fs_'+i));const acc=detectAccount(d.fullText+' '+(d.rawText||''));
       document.getElementById('fa_'+i).textContent=acc;
       let p;if(acc==='Danube')p=parseDanube(d);else if(acc==='Tamimi')p=parseTamimi(d);
-      else if(acc==='LuLu')p=parseLuLu(d);else if(acc==='Carrefour')p=parseCarrefour(d);else p=parseGeneric(d,acc);
+      else if(acc==='LuLu')p=parseLuLu(d);else if(acc==='Carrefour')p=parseCarrefour(d);else if(acc==='Othaim')p=parseOthaim(d);else p=parseGeneric(d,acc);
       p.id=Date.now()+'_'+i;p.uploadedAt=new Date().toISOString();p.filename=f.name;
       // Order Date = conversion day (today); keep the real PO date separately
       p.poDate=p.orderDate;
       p.orderDate=new Date().toISOString();
+      // Enrich from store directory: customer code, salesman, salesman1, store name
+      const info=storeInfo(p.account,p.storeNumber);
+      if(info){p.customerCode=info.code;p.customerName=info.name;p.salesman=info.salesman;p.salesman1=info.salesman1;if(!p.deliveryTo||p.deliveryTo.length<3)p.deliveryTo=info.city;}
       // Apply selected batch order type (overrides auto-detected) if chosen
       const bt=document.getElementById('batchType').value;
       if(bt)p.orderType=bt;
-      const ex=orders.findIndex(o=>o.poNumber===p.poNumber&&o.account===p.account);
+      // Duplicate = same account + store + PO + order date (some chains, e.g. Othaim, reuse one PO
+      // number across many stores, so PO+account alone would wrongly merge different stores' orders)
+      const key=o=>`${o.account}|${o.storeNumber||''}|${o.poNumber}|${fmtDate(o.poDate||o.orderDate)}`;
+      const ex=orders.findIndex(o=>key(o)===key(p));
       if(ex>=0){p.id=orders[ex].id;orders[ex]=p;}else{orders.unshift(p);added++;}
+      PDF_FILES[p.id]=f; // retain original PDF for the rename/download feature
       LOG(`→ ${acc} · PO ${p.poNumber} · SAR ${fmtNum(p.totalExVat)} · ${p.items.length} items`, acc==='Unknown'?'warn':'ok');
       document.getElementById('fs_'+i).textContent='✅';document.getElementById('fi_'+i).className='file-item done';
     }catch(err){console.error(err);
@@ -636,6 +730,11 @@ function saveModal(){
 }
 
 async function exportToExcel(){if(!orders.length){showToast('⚠️ No data');return;}
+  const xbtn=[...document.querySelectorAll('.btn-export')][0];
+  if(xbtn){xbtn._t=xbtn.textContent;xbtn.textContent='⏳ Generating…';xbtn.style.opacity='0.6';}
+  showToast('⏳ Building Excel…');
+  await new Promise(r=>setTimeout(r,40));
+  try{
   const g=groupByAccount();const accs=Object.keys(g);
   const M=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];const now=new Date();
   const ACOLOR={Tamimi:'FF13688F',Danube:'FF54852E',LuLu:'FF9A7200',Carrefour:'FF9C2B8C',Panda:'FF2E7D32',Othaim:'FF6A1B9A',Unknown:'FF455A64'};
@@ -679,14 +778,18 @@ async function exportToExcel(){if(!orders.length){showToast('⚠️ No data');re
 
   // ---------- All Orders ----------
   const ws2=wb.addWorksheet('All Orders',{views:[{showGridLines:false}]});
-  const oh=['#','PO Number','Account','Store #','Store Name','Region','Order Date','PO Date','Expiry','Ex-VAT','VAT','Inc-VAT','Qty','Type'];
+  const oh=['#','PO Number','Account','Store #','Store Name','Customer Code','Salesman','Salesman1','Region','Order Date','PO Date','Expiry','Ex-VAT','VAT','Inc-VAT','Qty','Type'];
   ws2.addRow(oh);styleHeader(ws2,1,HEAD);
-  orders.forEach((o,i)=>{const r=ws2.addRow([i+1,o.poNumber,o.account,o.storeNumber||'',o.deliveryTo||'',o.region||'',fmtDate(o.orderDate),fmtDate(o.poDate),fmtDate(o.expiryDate),o.totalExVat||0,o.vat||0,o.totalIncVat||0,o.totalQty||0,o.orderType||'']);
+  orders.forEach((o,i)=>{const r=ws2.addRow([i+1,o.poNumber,o.account,o.storeNumber||'',o.deliveryTo||'',o.customerCode||'',o.salesman||'',o.salesman1||'',o.region||'',fmtDate(o.orderDate),fmtDate(o.poDate),fmtDate(o.expiryDate),o.totalExVat||0,o.vat||0,o.totalIncVat||0,o.totalQty||0,o.orderType||'']);
     const bg=ELIGHT[o.account]||'FFFFFFFF',fg=ACOLOR[o.account]||'FF333333';
     r.eachCell(c=>{c.fill={type:'pattern',pattern:'solid',fgColor:{argb:bg}};c.border=border;});
-    r.getCell(3).font={bold:true,color:{argb:fg}};});
-  [10,11,12].forEach(c=>{for(let r=2;r<=orders.length+1;r++)ws2.getCell(r,c).numFmt=moneyFmt;});
-  ws2.columns=[{width:5},{width:14},{width:12},{width:9},{width:24},{width:10},{width:13},{width:13},{width:13},{width:13},{width:12},{width:13},{width:7},{width:18}];
+    r.getCell(3).font={bold:true,color:{argb:fg}};
+    r.getCell(4).font={bold:true,color:{argb:'FF1F5FA8'}};   // Store# — blue
+    r.getCell(8).font={bold:true,color:{argb:'FF7B2FA0'}};   // Salesman1 — purple
+    r.getCell(13).font={bold:true,color:{argb:'FF1E7A2E'}};  // Ex-VAT amount — green
+  });
+  [13,14,15].forEach(c=>{for(let r=2;r<=orders.length+1;r++)ws2.getCell(r,c).numFmt=moneyFmt;});
+  ws2.columns=[{width:5},{width:14},{width:12},{width:9},{width:24},{width:14},{width:26},{width:13},{width:10},{width:13},{width:13},{width:13},{width:13},{width:12},{width:13},{width:7},{width:18}];
   ws2.views=[{state:'frozen',ySplit:1,showGridLines:false}];
 
   // ---------- All Items ----------
@@ -694,31 +797,31 @@ async function exportToExcel(){if(!orders.length){showToast('⚠️ No data');re
   const allItems=orders.flatMap(o=>(o.items||[]).map(it=>({o,it})));
   if(allItems.length){
     const ws3=wb.addWorksheet('All Items',{views:[{showGridLines:false}]});
-    const ih=['Account','Store #','Store Name','PO Number','Order Date','Code','Barcode','Description','Qty','UOM','Unit Price','Total','Request Order','Remarks'];
+    const ih=['Account','Store #','Store Name','PO Number','PO Date','Expiry','Code','Barcode','Description','Qty','UOM','Unit Price','Total','Request Order','Remarks'];
     ws3.addRow(ih);styleHeader(ws3,1,ACCENT);
-    allItems.forEach(({o,it},idx)=>{const r=ws3.addRow([o.account,o.storeNumber||'',o.deliveryTo||'',o.poNumber,fmtDate(o.orderDate),it.code||'',it.barcode||'',it.desc||'',(it.qty!==''&&it.qty!=null?it.qty:''),it.uom||'',it.unit||0,it.total||0,'','']);
+    allItems.forEach(({o,it},idx)=>{const r=ws3.addRow([o.account,o.storeNumber||'',o.deliveryTo||'',o.poNumber,fmtDate(o.poDate||o.orderDate),fmtDate(o.expiryDate),it.code||'',it.barcode||'',it.desc||'',(it.qty!==''&&it.qty!=null?it.qty:''),it.uom||'',it.unit||0,it.total||0,'','']);
       const bg=ELIGHT[o.account]||'FFFFFFFF',fg=ACOLOR[o.account]||'FF333333';
       r.eachCell(c=>{c.fill={type:'pattern',pattern:'solid',fgColor:{argb:bg}};c.border=border;});
       r.getCell(1).font={bold:true,color:{argb:fg}};});
-    // Single flexible-dropdown validation over the whole Remarks column (no per-cell overlap)
-    ws3.dataValidations.add('N2:N'+(allItems.length+1),{type:'list',allowBlank:true,formulae:[REMARKS],showErrorMessage:false});
-    [11,12].forEach(c=>{for(let r=2;r<=allItems.length+1;r++)ws3.getCell(r,c).numFmt=moneyFmt;});
-    ws3.columns=[{width:11},{width:9},{width:22},{width:14},{width:13},{width:12},{width:16},{width:42},{width:7},{width:8},{width:12},{width:12},{width:14},{width:22}];
+    // Single flexible-dropdown validation over the whole Remarks column (O), no per-cell overlap
+    ws3.dataValidations.add('O2:O'+(allItems.length+1),{type:'list',allowBlank:true,formulae:[REMARKS],showErrorMessage:false});
+    [12,13].forEach(c=>{for(let r=2;r<=allItems.length+1;r++)ws3.getCell(r,c).numFmt=moneyFmt;});
+    ws3.columns=[{width:11},{width:9},{width:22},{width:14},{width:12},{width:12},{width:12},{width:16},{width:42},{width:7},{width:8},{width:12},{width:12},{width:14},{width:22}];
     ws3.views=[{state:'frozen',ySplit:1,showGridLines:false}];
   }
 
   // ---------- Per-account sheets ----------
   for(const a of accs){const grp=orders.filter(o=>o.account===a);
     const ws=wb.addWorksheet(a,{views:[{showGridLines:false}]});
-    const hdr=['Store #','Store Name','PO Number','Order Date','Expiry','Code','Barcode','Description','Qty','UOM','Unit Price','Total','Request Order','Remarks'];
+    const hdr=['Store #','Store Name','PO Number','PO Date','Expiry','Code','Barcode','Description','Qty','UOM','Unit Price','Total','Request Order','Remarks'];
     ws.addRow(hdr);styleHeader(ws,1,ACOLOR[a]||HEAD);
     let rownum=1;
     const bg=ELIGHT[a]||'FFFFFFFF';
-    for(const o of grp){(o.items||[]).forEach(it=>{const r=ws.addRow([o.storeNumber||'',o.deliveryTo||'',o.poNumber,fmtDate(o.orderDate),fmtDate(o.expiryDate),it.code||'',it.barcode||'',it.desc||'',(it.qty!==''&&it.qty!=null?it.qty:''),it.uom||'',it.unit||0,it.total||0,'','']);
+    for(const o of grp){(o.items||[]).forEach(it=>{const r=ws.addRow([o.storeNumber||'',o.deliveryTo||'',o.poNumber,fmtDate(o.poDate||o.orderDate),fmtDate(o.expiryDate),it.code||'',it.barcode||'',it.desc||'',(it.qty!==''&&it.qty!=null?it.qty:''),it.uom||'',it.unit||0,it.total||0,'','']);
       r.eachCell(c=>{c.fill={type:'pattern',pattern:'solid',fgColor:{argb:bg}};c.border=border;});rownum++;});}
     // orders with no items still listed (header-only row)
     const noItem=grp.filter(o=>!(o.items||[]).length);
-    noItem.forEach(o=>{const r=ws.addRow([o.storeNumber||'',o.deliveryTo||'',o.poNumber,fmtDate(o.orderDate),fmtDate(o.expiryDate),'','','(no line items — totals only)','','','',o.totalExVat||0,'','']);
+    noItem.forEach(o=>{const r=ws.addRow([o.storeNumber||'',o.deliveryTo||'',o.poNumber,fmtDate(o.poDate||o.orderDate),fmtDate(o.expiryDate),'','','(no line items — totals only)','','','',o.totalExVat||0,'','']);
       r.eachCell(c=>{c.fill={type:'pattern',pattern:'solid',fgColor:{argb:bg}};c.border=border;});rownum++;});
     // Single flexible-dropdown validation over the whole Remarks column (no per-cell overlap)
     if(rownum>=2)ws.dataValidations.add('N2:N'+rownum,{type:'list',allowBlank:true,formulae:[REMARKS],showErrorMessage:false});
@@ -740,7 +843,32 @@ async function exportToExcel(){if(!orders.length){showToast('⚠️ No data');re
   const blob=new Blob([buf],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
   const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=fname;a.click();
   setTimeout(()=>URL.revokeObjectURL(url),2000);
-  showToast(`📥 Exported "${fname}"`);}
+  showToast(`📥 Exported "${fname}"`);
+  }finally{if(xbtn){xbtn.textContent=xbtn._t||'📥 Export Excel';xbtn.style.opacity='1';}}
+}
+async function downloadRenamedPDFs(){
+  if(typeof JSZip==='undefined'){showToast('⚠️ ZIP library not loaded (check internet)');return;}
+  const have=orders.filter(o=>PDF_FILES[o.id]);
+  if(!have.length){showToast('⚠️ No PDFs in this session — re-upload then convert first');return;}
+  const zip=new JSZip();const used={};
+  for(const o of have){
+    const f=PDF_FILES[o.id];
+    // Filename: <Store#> <Salesman1> <amount ex-VAT>, space-separated
+    const parts=[o.storeNumber||storeLabel(o), o.salesman1||'', (o.totalExVat||0).toFixed(2)].filter(Boolean);
+    let base=sanitizeFile(parts.join(' '));
+    let name=base+'.pdf';let k=2;
+    while(used[name]){name=base+' ('+(k++)+').pdf';}
+    used[name]=1;
+    zip.file(name,f);
+  }
+  const M=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];const now=new Date();
+  const blob=await zip.generateAsync({type:'blob'});
+  const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;
+  a.download=`JAVIS PDFs — ${String(now.getDate()).padStart(2,'0')}-${M[now.getMonth()]}-${now.getFullYear()}.zip`;a.click();
+  setTimeout(()=>URL.revokeObjectURL(url),3000);
+  const miss=orders.length-have.length;
+  showToast(`📦 ${have.length} PDF(s) renamed & zipped${miss>0?` · ${miss} from older sessions skipped`:''}`);
+}
 function showToast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),3000);}
 function LOG(msg,cls){const el=document.getElementById('statusLog');if(!el)return;el.style.display='block';
   const time=new Date().toLocaleTimeString();
