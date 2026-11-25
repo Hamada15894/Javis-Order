@@ -152,6 +152,20 @@
   .progress-fill { height:100%; background:linear-gradient(90deg,var(--accent),#1d4ed8); border-radius:2px; transition:width .3s; width:0; }
   .toast { position:fixed; bottom:24px; left:50%; transform:translateX(-50%) translateY(100px); background:var(--surface2); border:1px solid var(--accent); color:var(--text); padding:12px 24px; border-radius:10px; font-size:13px; z-index:1000; transition:transform .3s; box-shadow:0 8px 32px rgba(0,0,0,.5); white-space:nowrap; }
   .toast.show { transform:translateX(-50%) translateY(0); }
+
+  /* polish */
+  td.st-no{color:#5fb4ff;font-weight:700;font-family:'JetBrains Mono',monospace}
+  td.rep{color:#c08bff;font-weight:600}
+  td.city{color:var(--text2);max-width:130px;overflow:hidden;text-overflow:ellipsis}
+  td.amount.ex{color:#4ade80;font-weight:800;font-size:12.5px}
+  td,thead th{padding-left:8px;padding-right:8px}
+  td{padding-top:8px;padding-bottom:8px}
+  .file-list{max-height:170px;overflow-y:auto;padding-right:2px}
+  .status-log{max-height:110px}
+  .email-rich{padding:12px;max-height:520px}
+  .email-rich table{font-size:11.5px}
+  .main-grid{grid-template-columns:340px minmax(0,1fr)}
+  td.city{max-width:120px}
   @media (max-width:900px) { .main-grid { grid-template-columns:1fr; } .header-stats { display:none; } }
 </style>
 </head>
@@ -206,12 +220,6 @@
           <div id="statusLog" class="status-log" style="display:none"></div>
         </div>
       </div>
-      <div class="card">
-        <div class="card-header"><span>📧</span><h3>Email Summary</h3><div style="flex:1"></div>
-          <button class="btn btn-copy" style="padding:6px 12px; font-size:11px" onclick="copyEmailSummary()">📋 Copy (colored)</button>
-        </div>
-        <div class="card-body"><div class="email-box" id="emailBox">No data yet.</div></div>
-      </div>
     </div>
     <div class="card" style="min-width:0;">
       <div class="card-header"><span>📋</span><h3>Order Records</h3><div style="flex:1"></div>
@@ -235,6 +243,14 @@
         <div id="tableContainer"><div class="empty-state"><div class="icon">📂</div><p>Upload PDF files to begin</p></div></div>
       </div>
     </div>
+  </div>
+  <div style="margin-top:14px">
+      <div class="card">
+        <div class="card-header"><span>📧</span><h3>Email Summary</h3><div style="flex:1"></div>
+          <button class="btn btn-copy" style="padding:6px 12px; font-size:11px" onclick="copyEmailSummary()">📋 Copy (colored)</button>
+        </div>
+        <div class="card-body"><div class="email-box" id="emailBox">No data yet.</div></div>
+      </div>
   </div>
 </div>
 <div class="modal-overlay" id="modalOverlay">
@@ -334,7 +350,7 @@ async function extractPDF(file,statusEl){
   const textLen=(fullText+rawText).replace(/\s/g,'').length;
   const acct=detectAccount(fullText+' '+rawText);
   // Trigger OCR for scanned/unreadable PDFs: little text OR unrecognised account
-  if(textLen<60||acct==='Unknown'){
+  if(textLen<60||(acct==='Unknown'&&textLen<400)){
     LOG(`No text layer (chars=${textLen}) → running OCR…`,'info');
     if(statusEl)statusEl.innerHTML='<span class="spinning">🔍</span>';
     const ocr=await ocrPDF(pdf,statusEl);
@@ -346,19 +362,19 @@ async function extractPDF(file,statusEl){
   return{lines,fullText,rawText};
 }
 
-async function ocrPDF(pdf,statusEl){
+let _ocrW=null,_ocrChain=Promise.resolve();
+async function getOcrWorker(statusEl){
+  if(!_ocrW){_ocrW=(async()=>{LOG('Loading OCR engine (once)…','info');
+    const w=await Tesseract.createWorker('eng',1);
+    await w.setParameters({tessedit_pageseg_mode:'3',preserve_interword_spaces:'1'});LOG('OCR engine ready','ok');return w;})();
+    _ocrW.catch(()=>{_ocrW=null;});}
+  return _ocrW;}
+function ocrPDF(pdf,statusEl){const run=()=>ocrPDF_(pdf,statusEl);const r=_ocrChain.then(run,run);_ocrChain=r.catch(()=>{});return r;}
+async function ocrPDF_(pdf,statusEl){
   let lines=[],fullText='';
   if(typeof Tesseract==='undefined'){LOG('Tesseract.js not loaded (network blocked?)','err');throw new Error('OCR_ENGINE_LOAD_FAILED');}
   let worker;
-  try{
-    LOG('Loading OCR engine…','info');
-    worker=await Tesseract.createWorker('eng',1,{
-      logger:m=>{if(m.status==='recognizing text'&&statusEl)statusEl.title='OCR '+Math.round(m.progress*100)+'%';}
-    });
-    // PSM 3 (full auto page segmentation) — default mode mis-reads dense tables as garbage
-    await worker.setParameters({tessedit_pageseg_mode:'3',preserve_interword_spaces:'1'});
-    LOG('OCR engine ready','ok');
-  }catch(e){LOG('OCR engine failed to load: '+(e&&e.message||e),'err');throw new Error('OCR_ENGINE_LOAD_FAILED');}
+  try{worker=await getOcrWorker(statusEl);}catch(e){LOG('OCR engine failed to load: '+(e&&e.message||e),'err');throw new Error('OCR_ENGINE_LOAD_FAILED');}
   try{
     for(let p=1;p<=pdf.numPages;p++){
       LOG(`OCR scanning page ${p}/${pdf.numPages}…`,'info');
@@ -376,7 +392,6 @@ async function ocrPDF(pdf,statusEl){
       }
     }
   }catch(e){LOG('OCR scan error: '+(e&&e.message||e),'err');}
-  finally{try{await worker.terminate();}catch(e){}}
   return{lines,fullText};
 }
 
@@ -561,39 +576,42 @@ async function convertAll(){const btn=document.getElementById('convertBtn');
   btn.disabled=true;btn.textContent='⏳ Converting...';
   document.getElementById('statusLog').innerHTML='';
   const prog=document.getElementById('progressFill');let added=0;
-  for(let i=0;i<pendingFiles.length;i++){const f=pendingFiles[i];
+  const files=pendingFiles.slice(),N=files.length;let done=0,next=0,ok=0;
+  const bt=document.getElementById('batchType').value;
+  const key=o=>`${o.account}|${o.storeNumber||''}|${o.poNumber}|${fmtDate(o.poDate||o.orderDate)}`;
+  let rt=null;const scheduleRender=()=>{if(rt)return;rt=setTimeout(()=>{rt=null;try{saveOrders();renderAll();}catch(e){console.error(e);}},350);};
+  async function work(i){const f=files[i];
     document.getElementById('fs_'+i).innerHTML='<span class="spinning">⚙️</span>';
-    prog.style.width=((i/pendingFiles.length)*100)+'%';
-    LOG(`Reading "${f.name}"…`,'info');
-    try{const d=await extractPDF(f,document.getElementById('fs_'+i));const acc=detectAccount(d.fullText+' '+(d.rawText||''));
+    try{const d=await Promise.race([extractPDF(f,document.getElementById('fs_'+i)),new Promise((_,rej)=>setTimeout(()=>rej(new Error('Timed out after 120s — file skipped')),120000))]);
+      const acc=detectAccount(d.fullText+' '+(d.rawText||''));
       document.getElementById('fa_'+i).textContent=acc;
       let p;if(acc==='Danube')p=parseDanube(d);else if(acc==='Tamimi')p=parseTamimi(d);
       else if(acc==='LuLu')p=parseLuLu(d);else if(acc==='Carrefour')p=parseCarrefour(d);else if(acc==='Othaim')p=parseOthaim(d);else p=parseGeneric(d,acc);
       p.id=Date.now()+'_'+i;p.uploadedAt=new Date().toISOString();p.filename=f.name;
-      // Order Date = conversion day (today); keep the real PO date separately
-      p.poDate=p.orderDate;
-      p.orderDate=new Date().toISOString();
-      // Enrich from store directory: customer code, salesman, salesman1, store name
+      p.poDate=p.orderDate;p.orderDate=new Date().toISOString();
       const info=storeInfo(p.account,p.storeNumber);
       if(info){p.customerCode=info.code;p.customerName=info.name;p.salesman=info.salesman;p.salesman1=info.salesman1;p.deliveryTo=info.city||p.deliveryTo;p.region='North';}
-      // Apply selected batch order type (overrides auto-detected) if chosen
-      const bt=document.getElementById('batchType').value;
       if(bt)p.orderType=bt;
-      // Duplicate = same account + store + PO + order date (some chains, e.g. Othaim, reuse one PO
-      // number across many stores, so PO+account alone would wrongly merge different stores' orders)
-      const key=o=>`${o.account}|${o.storeNumber||''}|${o.poNumber}|${fmtDate(o.poDate||o.orderDate)}`;
+      // show each order on screen as soon as it is converted
       const ex=orders.findIndex(o=>key(o)===key(p));
       if(ex>=0){p.id=orders[ex].id;orders[ex]=p;}else{orders.unshift(p);added++;}
-      PDF_FILES[p.id]=f; // retain original PDF for the rename/download feature
-      LOG(`→ ${acc} · PO ${p.poNumber} · SAR ${fmtNum(p.totalExVat)} · ${p.items.length} items`, acc==='Unknown'?'warn':'ok');
+      PDF_FILES[p.id]=f;ok++;
+      LOG(`→ ${acc} · PO ${p.poNumber} · store ${p.storeNumber||'?'} · SAR ${fmtNum(p.totalExVat)} · ${p.items.length} items`,acc==='Unknown'?'warn':'ok');
       document.getElementById('fs_'+i).textContent='✅';document.getElementById('fi_'+i).className='file-item done';
+      scheduleRender();
     }catch(err){console.error(err);
       const oce=err&&err.message==='OCR_ENGINE_LOAD_FAILED';
       LOG(`✗ "${f.name}" failed: ${oce?'OCR engine could not load':(err&&err.message||err)}`,'err');
-      document.getElementById('fs_'+i).textContent=oce?'⚠️':'❌';document.getElementById('fi_'+i).className='file-item error';
-    }
-  }
-  prog.style.width='100%';saveOrders();renderAll();
+      document.getElementById('fs_'+i).textContent=oce?'⚠️':'❌';document.getElementById('fi_'+i).className='file-item error';}
+    done++;prog.style.width=(done/N*100)+'%';btn.textContent=`⏳ Converting ${done}/${N}`;
+    await new Promise(r=>setTimeout(r,0));}
+  try{await Promise.all(Array.from({length:Math.min(6,N)},async()=>{while(next<N){await work(next++);}}));}catch(e){console.error(e);}
+  LOG(`Done: ${ok}/${N} converted`,'ok');
+  if(rt){clearTimeout(rt);rt=null;}
+  try{saveOrders();}catch(e){showToast('⚠️ Could not save to browser storage: '+e.message);}
+  try{renderAll();}catch(e){console.error(e);LOG('Display error: '+e.message,'err');}
+
+  prog.style.width='100%';
   btn.textContent='⚡ Convert & Add to Records';btn.disabled=false;
   pendingFiles=[];fileInput.value='';setTimeout(()=>prog.style.width='0',1000);
   showToast(`✅ ${added} order(s) added`);}
@@ -678,10 +696,10 @@ function renderTable(){const c=document.getElementById('tableContainer');let f=[
   const q=document.getElementById('filterSearch').value.trim().toLowerCase();
   if(q)f=f.filter(o=>(o.poNumber||'').toLowerCase().includes(q)||(o.deliveryTo||'').toLowerCase().includes(q)||(o.account||'').toLowerCase().includes(q)||(o.storeNumber||'').toLowerCase().includes(q));
   if(!f.length){c.innerHTML=`<div class="empty-state"><div class="icon">🔍</div><p>No results</p></div>`;return;}
-  c.innerHTML=`<div class="table-wrap"><table><thead><tr><th></th><th>PO Number</th><th>Account</th><th>Store</th><th>Region</th><th>Order Date</th><th>Expiry</th><th>Ex-VAT</th><th>VAT</th><th>Inc-VAT</th><th>Qty</th><th>Type</th><th></th></tr></thead><tbody>${f.map(o=>{
+  c.innerHTML=`<div class="table-wrap"><table><thead><tr><th></th><th>Store</th><th>City</th><th>Salesman</th><th>PO Number</th><th>Account</th><th>Expiry</th><th>Ex-VAT</th><th>Inc-VAT</th><th>Qty</th><th></th></tr></thead><tbody>${f.map(o=>{
     const ec=expiryClass(o.expiryDate);const hasItems=(o.items||[]).length>0;const isExp=expanded[o.id];
-    let row=`<tr><td>${hasItems?`<span class="toggle-items" onclick="toggleItems('${o.id}')">${isExp?'▾':'▸'}</span>`:''}</td><td class="mono">${o.poNumber}</td><td><span class="badge acct-${o.account.toLowerCase()}">${o.account}</span></td><td>${o.storeNumber||'—'}</td><td>${o.region||'—'}</td><td class="date">${fmtDate(o.orderDate)}</td><td class="date ${ec}">${fmtDate(o.expiryDate)}</td><td class="amount">${fmtNum(o.totalExVat)}</td><td class="mono" style="color:var(--orange)">${fmtNum(o.vat)}</td><td class="amount" style="color:var(--green)">${fmtNum(o.totalIncVat)}</td><td class="mono">${o.totalQty||'—'}</td><td style="color:var(--text2);font-size:11px">${o.orderType||'—'}</td><td style="white-space:nowrap"><button class="edit-btn" onclick="openModal('${o.id}')">✏️</button><button onclick="deleteOrder('${o.id}')" style="background:rgba(248,113,113,0.13);border:none;color:var(--red);cursor:pointer;padding:3px 8px;border-radius:4px;font-size:11px">✕</button></td></tr>`;
-    if(hasItems&&isExp){row+=`<tr class="items-row"><td colspan="13"><div class="items-inner"><table class="items-table"><thead><tr><th>#</th><th>Code</th><th>Barcode</th><th>Description</th><th>Qty</th><th>UOM</th><th>Unit Price</th><th>Total</th></tr></thead><tbody>${o.items.map((it,j)=>`<tr><td>${j+1}</td><td class="mono">${it.code||''}</td><td class="mono">${it.barcode||'—'}</td><td>${it.desc||''}</td><td class="mono">${it.qty!==''&&it.qty!=null?it.qty:'—'}</td><td class="mono">${it.uom||''}</td><td class="mono">${fmtNum(it.unit)}</td><td class="mono" style="color:var(--accent)">${fmtNum(it.total)}</td></tr>`).join('')}</tbody></table></div></td></tr>`;}
+    let row=`<tr><td>${hasItems?`<span class="toggle-items" onclick="toggleItems('${o.id}')">${isExp?'▾':'▸'}</span>`:''}</td><td class="st-no">${o.storeNumber||'—'}</td><td class="city">${o.deliveryTo||'—'}</td><td class="rep">${o.salesman1||'—'}</td><td class="mono">${o.poNumber}</td><td><span class="badge acct-${o.account.toLowerCase()}">${o.account}</span></td><td class="date ${ec}">${fmtDate(o.expiryDate)}</td><td class="amount ex">${fmtNum(o.totalExVat)}</td><td class="amount" style="color:var(--text2);font-weight:500">${fmtNum(o.totalIncVat)}</td><td class="mono">${o.totalQty||'—'}</td><td style="white-space:nowrap"><button class="edit-btn" onclick="openModal('${o.id}')">✏️</button><button onclick="deleteOrder('${o.id}')" style="background:rgba(248,113,113,0.13);border:none;color:var(--red);cursor:pointer;padding:3px 8px;border-radius:4px;font-size:11px">✕</button></td></tr>`;
+    if(hasItems&&isExp){row+=`<tr class="items-row"><td colspan="11"><div class="items-inner"><table class="items-table"><thead><tr><th>#</th><th>Code</th><th>Barcode</th><th>Description</th><th>Qty</th><th>UOM</th><th>Unit Price</th><th>Total</th></tr></thead><tbody>${o.items.map((it,j)=>`<tr><td>${j+1}</td><td class="mono">${it.code||''}</td><td class="mono">${it.barcode||'—'}</td><td>${it.desc||''}</td><td class="mono">${it.qty!==''&&it.qty!=null?it.qty:'—'}</td><td class="mono">${it.uom||''}</td><td class="mono">${fmtNum(it.unit)}</td><td class="mono" style="color:var(--accent)">${fmtNum(it.total)}</td></tr>`).join('')}</tbody></table></div></td></tr>`;}
     return row;}).join('')}</tbody></table></div>`;}
 function toggleItems(id){expanded[id]=!expanded[id];renderTable();}
 function deleteOrder(id){orders=orders.filter(o=>o.id!==id);saveOrders();renderAll();}
@@ -840,33 +858,6 @@ async function exportToExcel(){if(!orders.length){showToast('⚠️ No data');re
     ws.views=[{state:'frozen',ySplit:1,showGridLines:false}];
   }
 
-  // ---------- One sheet per salesman (stores grouped together, subtotal per store) ----------
-  const SPAL=['FF7B2FA0','FF1F5FA8','FFC55A11','FF1E7A2E','FFB8860B','FFC00000','FF00796B'];
-  const reps=[...new Set(orders.map(o=>(o.salesman1||'').trim()).filter(Boolean))].sort();
-  reps.forEach((rep,ri2)=>{
-    const grp=orders.filter(o=>(o.salesman1||'').trim()===rep).sort((x,y)=>(parseInt(x.storeNumber)||0)-(parseInt(y.storeNumber)||0));
-    const col=SPAL[ri2%SPAL.length];
-    const ws=wb.addWorksheet(('Rep - '+rep).slice(0,31),{views:[{showGridLines:false}]});
-    ws.addRow(['Store #','Store Name','PO Number','PO Date','Expiry','Code','Barcode','Description','Qty','UOM','Unit Price','Total','Request Order','Remarks']);
-    styleHeader(ws,1,col);
-    const dvRows=[];let rn=1,repTot=0;
-    for(const o of grp){const bg=ELIGHT[o.account]||'FFFFFFFF';
-      const lines=(o.items||[]).length?o.items:[{desc:'(no line items — totals only)',total:o.totalExVat||0}];
-      lines.forEach(it=>{const r=ws.addRow([o.storeNumber||'',o.deliveryTo||'',o.poNumber,fmtDate(o.poDate||o.orderDate),fmtDate(o.expiryDate),it.code||'',it.barcode||'',it.desc||'',(it.qty!==''&&it.qty!=null?it.qty:''),it.uom||'',it.unit||0,it.total||0,'','']);
-        r.eachCell(c=>{c.fill={type:'pattern',pattern:'solid',fgColor:{argb:bg}};c.border=border;});
-        r.getCell(1).font={bold:true,color:{argb:'FF1F5FA8'}};rn++;dvRows.push(rn);});
-      const st=ws.addRow(['','','','','','','','Store '+(o.storeNumber||'')+' — '+(o.deliveryTo||'')+' · Ex-VAT','','','',+(o.totalExVat||0).toFixed(2),'','']);
-      st.eachCell(c=>{c.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FFE3F2FD'}};});
-      st.getCell(8).font={bold:true,color:{argb:col}};st.getCell(12).font={bold:true,size:12,color:{argb:'FF1E7A2E'}};
-      rn++;repTot+=o.totalExVat||0;}
-    ws.addRow([]);
-    const t=ws.addRow(['','','','','','','',rep+' — TOTAL Ex-VAT','','','',+repTot.toFixed(2),'','']);
-    t.getCell(8).font={bold:true,size:12,color:{argb:col}};t.getCell(12).font={bold:true,size:13,color:{argb:'FF1E7A2E'}};t.getCell(12).numFmt=moneyFmt;
-    for(let r=2;r<=rn;r++){ws.getCell(r,11).numFmt=moneyFmt;ws.getCell(r,12).numFmt=moneyFmt;}
-    if(rn>=2)ws.dataValidations.add('N2:N'+rn,{type:'list',allowBlank:true,formulae:[REMARKS],showErrorMessage:false});
-    ws.columns=[{width:9},{width:20},{width:14},{width:13},{width:13},{width:12},{width:16},{width:42},{width:7},{width:8},{width:12},{width:14},{width:14},{width:22}];
-    ws.views=[{state:'frozen',ySplit:1,showGridLines:false}];
-  });
 
   const fname=`JAVIS Order — ${String(now.getDate()).padStart(2,'0')}-${M[now.getMonth()]}-${now.getFullYear()}.xlsx`;
   const buf=await wb.xlsx.writeBuffer();
@@ -880,17 +871,31 @@ async function downloadRenamedPDFs(){
   if(typeof JSZip==='undefined'){showToast('⚠️ ZIP library not loaded (check internet)');return;}
   const have=orders.filter(o=>PDF_FILES[o.id]);
   if(!have.length){showToast('⚠️ No PDFs in this session — re-upload then convert first');return;}
-  const zip=new JSZip();const used={};
-  for(const o of have){
-    const f=PDF_FILES[o.id];
-    // Filename: <Store#> <Salesman1> <amount ex-VAT>, space-separated
+  const zip=new JSZip();const used={};const rows=[];
+  const sm=o=>(o.salesman1||'').trim()||'No salesman';
+  const sorted=have.slice().sort((x,y)=>sm(x).localeCompare(sm(y))||(parseInt(x.storeNumber)||0)-(parseInt(y.storeNumber)||0));
+  for(const o of sorted){
+    const f=PDF_FILES[o.id];const folder=sanitizeFile(sm(o));
     const parts=[o.storeNumber||storeLabel(o), o.salesman1||'', (o.totalExVat||0).toFixed(2)].filter(Boolean);
     let base=sanitizeFile(parts.join(' '));
-    let name=base+'.pdf';let k=2;
-    while(used[name]){name=base+' ('+(k++)+').pdf';}
-    used[name]=1;
-    zip.file(name,f);
+    let name=folder+'/'+base+'.pdf';let k=2;
+    while(used[name]){name=folder+'/'+base+' ('+(k++)+').pdf';}
+    used[name]=1;zip.file(name,f);
+    rows.push([sm(o),o.storeNumber||'',o.totalExVat||0,name.split('/')[1]]);
   }
+  try{if(typeof ExcelJS!=='undefined'){
+    const wb=new ExcelJS.Workbook();const ws=wb.addWorksheet('Index');
+    ws.columns=[{header:'Salesman',width:20},{header:'Store #',width:11},{header:'Ex-VAT',width:18},{header:'File name',width:48}];
+    ws.getRow(1).eachCell(c=>{c.font={bold:true,color:{argb:'FFFFFFFF'}};c.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FF1F3A5F'}};});
+    const pal=[['FF7B2FA0','FFECE0F5'],['FF1F5FA8','FFDDEBF7'],['FFC55A11','FFFCE4D6'],['FF1E7A2E','FFE2EFDA'],['FFB8860B','FFFFF2CC'],['FFC00000','FFFADBD8'],['FF00796B','FFD9F2EF']];
+    const idx={};let n=0;
+    for(const r of rows){if(!(r[0] in idx))idx[r[0]]=n++;const [fg,bg]=pal[idx[r[0]]%pal.length];
+      const row=ws.addRow(r);
+      row.getCell(1).font={bold:true,color:{argb:fg}};row.getCell(1).fill={type:'pattern',pattern:'solid',fgColor:{argb:bg}};
+      row.getCell(2).font={bold:true,color:{argb:'FF1F5FA8'}};
+      row.getCell(3).font={bold:true,size:13,color:{argb:'FF1E7A2E'}};row.getCell(3).numFmt='#,##0.00';}
+    zip.file('Index.xlsx',await wb.xlsx.writeBuffer());
+  }}catch(e){console.warn('index failed',e);}
   const M=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];const now=new Date();
   const blob=await zip.generateAsync({type:'blob'});
   const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;
@@ -929,7 +934,7 @@ function openRepPanel(){
 function showToast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),3000);}
 function LOG(msg,cls){const el=document.getElementById('statusLog');if(!el)return;el.style.display='block';
   const time=new Date().toLocaleTimeString();
-  el.innerHTML+=`<div class="${cls||''}">[${time}] ${msg}</div>`;el.scrollTop=el.scrollHeight;
+  el.insertAdjacentHTML('beforeend',`<div class="${cls||''}">[${time}] ${msg}</div>`);while(el.childElementCount>150)el.removeChild(el.firstChild);el.scrollTop=el.scrollHeight;
   console.log('[JAVIS]',msg);}
 // Re-apply store directory to previously saved Othaim orders (city, salesman, code)
 {let ch=false;for(const o of orders){const i=storeInfo(o.account,o.storeNumber);if(i&&(o.deliveryTo!==i.city||o.salesman1!==i.salesman1||o.customerCode!==i.code)){o.customerCode=i.code;o.customerName=i.name;o.salesman=i.salesman;o.salesman1=i.salesman1;o.deliveryTo=i.city||o.deliveryTo;o.region='North';ch=true;}}if(ch)saveOrders();}
